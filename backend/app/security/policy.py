@@ -7,7 +7,9 @@ TOOL_PERMISSIONS = {
     "document_reader": ["read"],
     "file_search": ["search"],
     "sensitive_data": [],
-    "external_communication": []
+    "external_communication": [],
+    "file_access_manager": [],
+    "database_manager": []
 }
 
 

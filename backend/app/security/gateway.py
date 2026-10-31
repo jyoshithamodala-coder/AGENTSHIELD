@@ -21,11 +21,16 @@ from app.tools.sensitive_data import access_sensitive_data
 from app.tools.communication import send_external_message
 
 
+from app.tools.file_manager import file_access_manager
+from app.tools.database_manager import database_manager
+
 TOOL_REGISTRY = {
     "document_reader": read_document,
     "file_search": search_files,
     "sensitive_data": access_sensitive_data,
-    "external_communication": send_external_message
+    "external_communication": send_external_message,
+    "file_access_manager": file_access_manager,
+    "database_manager": database_manager
 }
 
 

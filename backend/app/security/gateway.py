@@ -19,10 +19,15 @@ from app.tools.document_reader import read_document
 from app.tools.file_search import search_files
 from app.tools.sensitive_data import access_sensitive_data
 from app.tools.communication import send_external_message
-
-
 from app.tools.file_manager import file_access_manager
 from app.tools.database_manager import database_manager
+
+import json
+
+
+# --------------------------------------------------
+# 1. REGISTERED TOOLS
+# --------------------------------------------------
 
 TOOL_REGISTRY = {
     "document_reader": read_document,
@@ -34,52 +39,330 @@ TOOL_REGISTRY = {
 }
 
 
-TOOL_ARGUMENTS = {
-    "document_reader": {"document_id": (str, 64)},
-    "file_search": {"keyword": (str, 100)},
-    "sensitive_data": {"record_id": (str, 64)},
+# --------------------------------------------------
+# 2. OPERATION ARGUMENT RULES
+# --------------------------------------------------
+
+SIMPLE_TOOL_ARGUMENTS = {
+    "document_reader": {
+        "document_id": (str, 64)
+    },
+    "file_search": {
+        "keyword": (str, 100)
+    },
+    "sensitive_data": {
+        "record_id": (str, 64)
+    },
     "external_communication": {
         "destination": (str, 254),
         "content": (str, 2000)
     }
 }
 
+FILE_OPERATION_ARGUMENTS = {
+    "search": {
+        "keyword": (str, 100)
+    },
+    "read": {
+        "file_path": (str, 500)
+    },
+    "create_folder": {
+        "folder_name": (str, 500)
+    },
+    "copy": {
+        "source": (str, 500),
+        "destination": (str, 500)
+    },
+    "rename": {
+        "source": (str, 500),
+        "new_name": (str, 500)
+    },
+    "edit": {
+        "file_path": (str, 500),
+        "content": (str, 10000)
+    },
+    "delete": {
+        "file_path": (str, 500)
+    }
+}
+
+DATABASE_OPERATION_ARGUMENTS = {
+    "create_database": {
+        "database_name": (str, 63)
+    },
+    "create_table": {
+        "database_name": (str, 63),
+        "table": (str, 63),
+        "columns": (list, None)
+    },
+    "list_tables": {
+        "database_name": (str, 63)
+    },
+    "describe_table": {
+        "database_name": (str, 63),
+        "table": (str, 63)
+    },
+    "read": {
+        "database_name": (str, 63),
+        "table": (str, 63)
+    },
+    "search": {
+        "database_name": (str, 63),
+        "table": (str, 63),
+        "keyword": (str, 500)
+    },
+    "insert": {
+        "database_name": (str, 63),
+        "table": (str, 63),
+        "record_json": (dict, None)
+    },
+    "update": {
+        "database_name": (str, 63),
+        "table": (str, 63),
+        "primary_key": (str, 63),
+        "record_id": (str, 255),
+        "updates_json": (dict, None)
+    },
+    "delete": {
+        "database_name": (str, 63),
+        "table": (str, 63),
+        "primary_key": (str, 63),
+        "record_id": (str, 255)
+    }
+}
+
+# Operations that may change or remove data.
+# They remain blocked until the approval workflow supports them.
+FILE_WRITE_OPERATIONS = {
+    "create_folder", "copy", "rename", "edit", "delete"
+}
+
+DATABASE_WRITE_OPERATIONS = {
+    "create_database", "create_table", "insert", "update", "delete"
+}
+
+
+# --------------------------------------------------
+# 3. VALIDATION HELPERS
+# --------------------------------------------------
+
+def validate_string(value, field, max_length):
+    if not isinstance(value, str):
+        return False, f"{field} must be a string."
+
+    if not value.strip():
+        return False, f"{field} cannot be empty."
+
+    if len(value) > max_length:
+        return False, f"{field} exceeds the length limit."
+
+    return True, "Valid."
+
+
+def validate_columns(columns):
+    if not isinstance(columns, list) or not columns:
+        return False, "columns must be a non-empty list."
+
+    allowed_types = {
+        "INTEGER", "INT", "BIGINT", "SMALLINT",
+        "VARCHAR", "TEXT", "DATE", "DATETIME",
+        "DECIMAL", "FLOAT", "DOUBLE", "BOOLEAN"
+    }
+
+    for column in columns:
+        if not isinstance(column, dict):
+            return False, "Each column must be an object."
+
+        allowed_fields = {
+            "name", "type", "length", "primary_key", "not_null"
+        }
+
+        if set(column) - allowed_fields:
+            return False, "Unexpected column properties."
+
+        if "name" not in column or "type" not in column:
+            return False, "Every column needs a name and type."
+
+        valid, reason = validate_string(
+            column["name"], "column name", 63
+        )
+        if not valid:
+            return False, reason
+
+        valid, reason = validate_string(
+            column["type"], "column type", 20
+        )
+        if not valid:
+            return False, reason
+
+        if column["type"].upper() not in allowed_types:
+            return False, "Unsupported SQL column type."
+
+        if "length" in column:
+            if (
+                not isinstance(column["length"], int)
+                or isinstance(column["length"], bool)
+                or not 1 <= column["length"] <= 65535
+            ):
+                return False, "Invalid column length."
+
+        for flag in ("primary_key", "not_null"):
+            if flag in column and not isinstance(column[flag], bool):
+                return False, f"{flag} must be true or false."
+
+    return True, "Columns validated."
+
 
 def validate_tool_arguments(tool_name, arguments):
     if not isinstance(arguments, dict):
         return False, "Tool arguments must be an object."
 
-    rules = TOOL_ARGUMENTS.get(tool_name)
+    # Ordinary fixed-schema tools
+    if tool_name in SIMPLE_TOOL_ARGUMENTS:
+        rules = SIMPLE_TOOL_ARGUMENTS[tool_name]
 
-    if rules is None:
-        return False, "No argument schema exists for this tool."
+        if set(arguments) != set(rules):
+            missing = set(rules) - set(arguments)
+            unexpected = set(arguments) - set(rules)
 
-    required = set(rules.keys())
-    supplied = set(arguments.keys())
+            return False, (
+                f"Missing arguments: {sorted(missing)}; "
+                f"unexpected arguments: {sorted(unexpected)}"
+            )
 
-    missing = required - supplied
-    unexpected = supplied - required
+        for field, (expected_type, max_length) in rules.items():
+            value = arguments[field]
 
-    if missing:
-        return False, f"Missing required arguments: {sorted(missing)}"
+            if not isinstance(value, expected_type):
+                return False, f"Invalid type for {field}."
 
-    if unexpected:
-        return False, f"Unexpected arguments: {sorted(unexpected)}"
+            if not isinstance(value, str) or not value.strip():
+                return False, f"{field} cannot be empty."
 
-    for field, (expected_type, max_length) in rules.items():
-        value = arguments[field]
+            if len(value) > max_length:
+                return False, f"{field} exceeds the length limit."
 
-        if not isinstance(value, expected_type):
-            return False, f"Invalid type for argument: {field}"
+        return True, "Arguments validated successfully."
 
-        if not value.strip():
-            return False, f"Argument cannot be empty: {field}"
+    # File manager
+    if tool_name == "file_access_manager":
+        operation = arguments.get("operation")
 
-        if len(value) > max_length:
-            return False, f"Argument exceeds length limit: {field}"
+        if operation not in FILE_OPERATION_ARGUMENTS:
+            return False, "Unsupported file operation."
 
-    return True, "Arguments validated successfully."
+        rules = FILE_OPERATION_ARGUMENTS[operation]
+        expected_fields = {"operation"} | set(rules)
 
+        if set(arguments) != expected_fields:
+            missing = expected_fields - set(arguments)
+            unexpected = set(arguments) - expected_fields
+
+            return False, (
+                f"Missing arguments: {sorted(missing)}; "
+                f"unexpected arguments: {sorted(unexpected)}"
+            )
+
+        for field, (expected_type, max_length) in rules.items():
+            value = arguments[field]
+
+            if not isinstance(value, expected_type):
+                return False, f"Invalid type for {field}."
+
+            if expected_type is str:
+                valid, reason = validate_string(
+                    value, field, max_length
+                )
+                if not valid:
+                    return False, reason
+
+        return True, "File arguments validated successfully."
+
+    # Database manager
+    if tool_name == "database_manager":
+        operation = arguments.get("operation")
+
+        if operation not in DATABASE_OPERATION_ARGUMENTS:
+            return False, "Unsupported database operation."
+
+        rules = DATABASE_OPERATION_ARGUMENTS[operation]
+
+        # record_id and primary_key are optional for read.
+        required_fields = {"operation"} | set(rules)
+
+        if operation == "read":
+            allowed_fields = required_fields | {
+                "record_id", "primary_key"
+            }
+
+            if not set(arguments).issubset(allowed_fields):
+                return False, "Unexpected database arguments."
+
+            if "record_id" in arguments and "primary_key" not in arguments:
+                return False, "primary_key is required when record_id is supplied."
+
+            if "primary_key" in arguments and "record_id" not in arguments:
+                return False, "record_id is required when primary_key is supplied."
+
+        elif set(arguments) != required_fields:
+            missing = required_fields - set(arguments)
+            unexpected = set(arguments) - required_fields
+
+            return False, (
+                f"Missing arguments: {sorted(missing)}; "
+                f"unexpected arguments: {sorted(unexpected)}"
+            )
+
+        for field, (expected_type, max_length) in rules.items():
+            value = arguments[field]
+
+            if not isinstance(value, expected_type):
+                return False, f"Invalid type for {field}."
+
+            if expected_type is str:
+                valid, reason = validate_string(
+                    value, field, max_length
+                )
+                if not valid:
+                    return False, reason
+
+        if operation == "read" and "record_id" in arguments:
+            valid, reason = validate_string(
+                str(arguments["record_id"]), "record_id", 255
+            )
+            if not valid:
+                return False, reason
+
+        if operation == "create_table":
+            valid, reason = validate_columns(arguments["columns"])
+            if not valid:
+                return False, reason
+
+        return True, "Database arguments validated successfully."
+
+    return False, "No argument schema exists for this tool."
+
+
+# --------------------------------------------------
+# 4. OPERATION RISK CHECK
+# --------------------------------------------------
+
+def is_write_operation(request):
+    arguments = request.arguments
+    operation = arguments.get("operation")
+
+    if request.tool_name == "file_access_manager":
+        return operation in FILE_WRITE_OPERATIONS
+
+    if request.tool_name == "database_manager":
+        return operation in DATABASE_WRITE_OPERATIONS
+
+    return False
+
+
+# --------------------------------------------------
+# 5. AUDIT LOGGING
+# --------------------------------------------------
 
 def record_event(request, decision, reason, risk_level):
     initialize_audit_db()
@@ -88,11 +371,16 @@ def record_event(request, decision, reason, risk_level):
         task_id=request.task_id,
         agent_id=request.agent_id,
         tool_name=request.tool_name,
-        decision=decision.value if hasattr(decision, "value") else str(decision),
+        decision=(
+            decision.value
+            if hasattr(decision, "value")
+            else str(decision)
+        ),
         reason=reason,
         risk_level=risk_level,
         arguments={
             "provided_fields": sorted(request.arguments.keys()),
+            "operation": request.arguments.get("operation"),
             "source": request.source
         }
     )
@@ -119,13 +407,21 @@ def make_response(
     }
 
 
+# --------------------------------------------------
+# 6. INSPECT RETRIEVED CONTENT
+# --------------------------------------------------
+
 def inspect_retrieved_content(tool_name, result):
     """
     Inspect retrieved document content before releasing it.
     """
 
+    if not isinstance(result, dict):
+        return True, "Tool returned a non-dictionary result."
+
     if tool_name == "document_reader" and result.get("success"):
         content = result.get("content", "")
+
         detection = detect_prompt_injection(content)
 
         if detection["is_suspicious"]:
@@ -134,10 +430,13 @@ def inspect_retrieved_content(tool_name, result):
     return True, "Retrieved content passed inspection."
 
 
+# --------------------------------------------------
+# 7. MAIN SECURITY GATEWAY
+# --------------------------------------------------
+
 def execute_tool(request: ToolRequest):
     """
-    Process a new tool request.
-    High-impact actions are stored for human approval.
+    Validate, authorize, execute, and audit a tool request.
     """
 
     try:
@@ -153,7 +452,7 @@ def execute_tool(request: ToolRequest):
 
     tool_name = request.tool_name
 
-    # 1. Reject unknown tools.
+    # Step 1: Reject unknown tools.
     if tool_name not in TOOL_REGISTRY:
         return make_response(
             request,
@@ -162,13 +461,13 @@ def execute_tool(request: ToolRequest):
             "HIGH"
         )
 
-    # 2. Validate arguments.
-    is_valid, validation_reason = validate_tool_arguments(
+    # Step 2: Validate arguments.
+    valid, validation_reason = validate_tool_arguments(
         tool_name,
         request.arguments
     )
 
-    if not is_valid:
+    if not valid:
         return make_response(
             request,
             SecurityDecision.DENY,
@@ -176,7 +475,7 @@ def execute_tool(request: ToolRequest):
             "HIGH"
         )
 
-    # 3. Inspect explicitly supplied untrusted content.
+    # Step 3: Inspect untrusted supplied content.
     if request.source == "untrusted_document":
         content = request.arguments.get("content", "")
         detection = detect_prompt_injection(content)
@@ -189,7 +488,18 @@ def execute_tool(request: ToolRequest):
                 "HIGH"
             )
 
-    # 4. Evaluate policy without assuming approval.
+    # Step 4: Block file/database writes until their approval
+    # workflow is implemented and tested.
+    if is_write_operation(request):
+        return make_response(
+            request,
+            SecurityDecision.DENY,
+            "This file/database write operation is not enabled yet. "
+            "Human approval support must be implemented first.",
+            "HIGH"
+        )
+
+    # Step 5: Ask the existing policy engine.
     policy = evaluate_policy(
         tool_name,
         user_confirmed=False
@@ -197,7 +507,8 @@ def execute_tool(request: ToolRequest):
 
     decision = policy["decision"]
 
-    # 5. Create approval request if required.
+    # Step 6: Create approval for tools already supported
+    # by the existing approval workflow.
     if decision == SecurityDecision.REQUIRE_APPROVAL:
         try:
             approval_id = create_pending_approval(request)
@@ -218,7 +529,7 @@ def execute_tool(request: ToolRequest):
                 "HIGH"
             )
 
-    # 6. Stop denied actions.
+    # Step 7: Stop denied or unsupported actions.
     if decision != SecurityDecision.ALLOW:
         return make_response(
             request,
@@ -227,11 +538,14 @@ def execute_tool(request: ToolRequest):
             policy["risk_level"]
         )
 
-    # 7. Execute authorized low-risk action.
+    # Step 8: Execute only through the trusted registry.
     try:
         result = TOOL_REGISTRY[tool_name](**request.arguments)
 
-        safe, reason = inspect_retrieved_content(tool_name, result)
+        safe, reason = inspect_retrieved_content(
+            tool_name,
+            result
+        )
 
         if not safe:
             return make_response(
@@ -260,24 +574,23 @@ def execute_tool(request: ToolRequest):
         )
 
 
-def resolve_approval(approval_id, approved):
-    """
-    Record a human approval or rejection.
-    """
+# --------------------------------------------------
+# 8. RESOLVE HUMAN APPROVAL
+# --------------------------------------------------
 
+def resolve_approval(approval_id, approved):
     success, message = resolve_pending_approval(
         approval_id,
         approved
     )
 
-    # Record the approval decision.
     try:
         initialize_audit_db()
 
         log_security_event(
             task_id="approval_workflow",
             agent_id="human_reviewer",
-            tool_name="external_communication",
+            tool_name="approval_workflow",
             decision="ALLOW" if success and approved else "DENY",
             reason=message,
             risk_level="HIGH",
@@ -285,20 +598,28 @@ def resolve_approval(approval_id, approved):
         )
 
     except Exception:
-        return False, "Audit logging failed. Approval resolution cannot continue safely."
+        return False, (
+            "Audit logging failed. Approval resolution "
+            "cannot continue safely."
+        )
 
     return success, message
 
 
+# --------------------------------------------------
+# 9. EXECUTE APPROVED ACTION
+# --------------------------------------------------
+
 def execute_approved_tool(approval_id):
     """
-    Execute the exact request previously approved by a human.
+    The current approval executor supports only
+    external communication. Other approved tool types
+    must not be executed until their workflow is added.
     """
 
     try:
         initialize_audit_db()
 
-        # Atomically claim the approved request.
         stored_request = consume_approved_action(approval_id)
 
         if stored_request is None:
@@ -312,7 +633,7 @@ def execute_approved_tool(approval_id):
 
         request = ToolRequest.model_validate(stored_request)
 
-        # Approval is currently supported only for external communication.
+        # Preserve the existing approval scope.
         if request.tool_name != "external_communication":
             finish_approval(approval_id, success=False)
 
@@ -323,7 +644,6 @@ def execute_approved_tool(approval_id):
                 "HIGH"
             )
 
-        # Revalidate the exact stored request.
         valid, reason = validate_tool_arguments(
             request.tool_name,
             request.arguments
@@ -339,8 +659,6 @@ def execute_approved_tool(approval_id):
                 "HIGH"
             )
 
-        # Recheck policy. The approval manager has already
-        # confirmed this exact request was approved.
         policy = evaluate_policy(
             request.tool_name,
             user_confirmed=True
@@ -356,7 +674,6 @@ def execute_approved_tool(approval_id):
                 "HIGH"
             )
 
-        # Execute the simulated communication tool.
         result = TOOL_REGISTRY[request.tool_name](
             **request.arguments
         )

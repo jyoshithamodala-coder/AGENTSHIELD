@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AEGIS AI | AgentShield</title><link rel="stylesheet" href="css/style.css"></head>
+<body><aside class="sidebar"><h2>◈ AEGIS AI</h2><small>AGENTSHIELD</small><nav>
+<button data-view="dashboard" class="active">Dashboard</button><button data-view="agent">AI Agent</button>
+<button data-view="security">Security Monitor</button><button data-view="audit">Audit Logs</button>
+<button data-view="operations">Operations</button></nav><p id="backendStatus">Checking backend…</p></aside>
+<main><header><div><small>SECURE AI OPERATIONS</small><h1 id="title">Dashboard</h1></div><button id="refresh">↻ Refresh</button></header>
+<section id="dashboard" class="view active"><h2>Security overview</h2><p>Live figures from your backend audit records.</p>
+<div class="stats"><article><small>Total operations</small><b id="total">—</b></article><article><small>Allowed</small><b id="allowed">—</b></article><article><small>Blocked</small><b id="blocked">—</b></article><article><small>Awaiting approval</small><b id="pending">—</b></article></div>
+<article class="panel"><h3>Recent security events</h3><div class="tablewrap"><table><thead><tr><th>TIME</th><th>TOOL</th><th>DECISION</th><th>RISK</th></tr></thead><tbody id="recent"><tr><td colspan="4">Loading…</td></tr></tbody></table></div></article></section>
+<section id="agent" class="view"><h2>AI Agent</h2><p>Describe a task for the backend AI planner.</p><div class="columns"><article class="panel"><div id="messages" class="messages"><p class="bot">AgentShield: Hello! What task would you like me to perform?</p></div><form id="chatForm"><textarea id="task" required placeholder="Example: List all tables in CollegeDB"></textarea><button id="send">Send task ↑</button></form></article><article class="panel"><h3>Decision inspector</h3><pre id="inspector">Submit a task to view the backend response.</pre></article></div></section>
+<section id="security" class="view"><h2>Security Monitor</h2><p>Decisions recorded by the security gateway.</p><article class="panel"><div id="securityEvents">Loading…</div></article></section>
+<section id="audit" class="view"><h2>Audit Logs</h2><p>Search and filter backend audit records.</p><div class="filters"><input id="search" placeholder="Search logs…"><select id="decision"><option value="">All decisions</option><option>ALLOW</option><option>DENY</option><option>REQUIRE_APPROVAL</option></select><select id="risk"><option value="">All risks</option><option>LOW</option><option>MEDIUM</option><option>HIGH</option><option>CRITICAL</option></select></div><article class="panel tablewrap"><table><thead><tr><th>TIME</th><th>AGENT</th><th>TOOL</th><th>DECISION</th><th>RISK</th><th>REASON</th><th>EXECUTION</th></tr></thead><tbody id="auditRows"></tbody></table><p id="auditCount"></p></article></section>
+<section id="operations" class="view"><h2>Supported operations</h2><p>Tool names configured in the current AI planner.</p><div class="tools">
+<article class="panel"><h3>Document reader</h3><code>document_reader</code><p>Read authorized document content.</p></article>
+<article class="panel"><h3>File search</h3><code>file_search</code><p>Search files by keyword.</p></article>
+<article class="panel"><h3>Sensitive data</h3><code>sensitive_data</code><p>Sensitive-data inspection subject to policy.</p></article>
+<article class="panel"><h3>External communication</h3><code>external_communication</code><p>External communication requests under security controls.</p></article>
+<article class="panel"><h3>File access manager</h3><code>file_access_manager</code><p>Manage permitted file access.</p></article>
+<article class="panel"><h3>Database manager</h3><code>database_manager</code><p>Perform supported database operations.</p></article></div>
+<p class="note">The backend enforces permissions and risk classifications. The frontend does not calculate or override security decisions.</p></section>
+<footer>AEGIS AI · AgentShield <span>Frontend prototype · FastAPI</span></footer></main>
+<script src="js/app.js"></script><script src="js/chat.js"></script><script src="js/audit.js"></script></body></html>
